@@ -1,0 +1,1410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="A dark, node-based mind map editor inspired by Blender's geometry nodes.">
+<title>Noodle Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap">
+<style>
+/* Layout: one-screen node editor — top bar, infinite grid canvas with a Blender-style sidebar (N panel), status bar. Dark only, Claude's warm greys + clay. */
+:root{
+  color-scheme:dark;
+  --bg:#262624;
+  --canvas:#1f1e1d;
+  --surface:#30302e;
+  --surface-2:#3a3936;
+  --line:rgba(222,220,209,.10);
+  --line-strong:rgba(222,220,209,.20);
+  --text:#faf9f5;
+  --text-2:#c2c0b6;
+  --text-3:#8f8d85;
+  --accent:#d97757;
+  --accent-strong:#c96442;
+  --accent-soft:rgba(217,119,87,.14);
+  --danger:#e0756e;
+  --ink:#141413;
+  --grid-minor:rgba(222,220,209,.035);
+  --grid-major:rgba(222,220,209,.075);
+  --font-ui:"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-serif:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--font-ui);overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+#app{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+
+/* top bar */
+.top{display:flex;align-items:center;gap:10px;padding-block:8px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));border-bottom:1px solid var(--line);background:var(--bg);min-width:0}
+.brand{display:flex;align-items:center;gap:8px;flex:none}
+.brand svg{width:22px;height:22px}
+.wordmark{font-family:var(--font-serif);font-size:17px;font-weight:600;letter-spacing:-.01em;color:var(--text)}
+.mapname{flex:1 1 120px;min-width:0;max-width:320px;background:transparent;border:1px solid transparent;border-radius:8px;color:var(--text-2);padding:5px 10px;font:500 14px var(--font-ui)}
+.mapname:hover{border-color:var(--line)}
+.mapname:focus{outline:none;border-color:var(--line-strong);background:var(--surface);color:var(--text)}
+.tools{display:flex;align-items:center;gap:2px;margin-left:auto;flex:none}
+.sep{width:1px;height:20px;background:var(--line-strong);margin:0 6px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 10px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text-2);font:500 13px var(--font-ui);cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--surface);color:var(--text)}
+.btn:focus-visible,.sw:focus-visible,.mi:focus-visible,.cname:focus-visible,.cx:focus-visible,.cbtn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btn svg{width:16px;height:16px;flex:none}
+.btn.icon{width:32px;padding:0}
+.btn.outline{border-color:var(--line-strong)}
+.btn.primary,.btn.primary:hover{color:#ffffff;font-weight:600}
+.btn.primary{background:#b9552f;box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.btn.primary:hover{background:var(--accent-strong)}
+.btn.primary svg{stroke-width:1.9}
+.btn.danger{color:var(--danger)}
+.btn.danger:hover{background:rgba(224,117,110,.12);color:var(--danger)}
+.btn:disabled{opacity:.35;cursor:default;background:transparent}
+.btn.on{background:var(--surface);color:var(--text)}
+svg.i{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+/* canvas */
+.main{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;min-height:0}
+.vp{position:relative;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;background-color:var(--canvas);
+  background-image:linear-gradient(var(--grid-major) 1px,transparent 1px),linear-gradient(90deg,var(--grid-major) 1px,transparent 1px),linear-gradient(var(--grid-minor) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor) 1px,transparent 1px)}
+.vp.grab{cursor:grab}
+.vp.panning{cursor:grabbing}
+.vp.cutting{cursor:crosshair}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.links{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none}
+.lk-sh{fill:none;stroke:var(--ink);stroke-width:5.5;stroke-linecap:round;opacity:.75}
+.lk-c{fill:none;stroke-width:2.6;stroke-linecap:round;opacity:.82}
+.lk.hot .lk-c{opacity:1;stroke-width:3.2}
+.lk:hover .lk-sh{stroke:var(--text-3);opacity:.6}
+.lk.picked .lk-sh{stroke:var(--text);opacity:.95;stroke-width:7}
+.lk-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+#tmpLink{fill:none;stroke-width:2.8;stroke-linecap:round}
+#tmpLinkSh{fill:none;stroke:var(--ink);stroke-width:5.5;stroke-linecap:round;opacity:.75}
+
+.node{position:absolute;left:0;top:0;width:220px;background:var(--surface);border-radius:7px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 22px rgba(0,0,0,.38)}
+.groups{position:absolute;left:0;top:0}
+.group{position:absolute;left:0;top:0;border-radius:12px;background:var(--gf);box-shadow:inset 0 0 0 1.5px var(--gb);pointer-events:none}
+.group.sel{box-shadow:inset 0 0 0 2px var(--text)}
+.gh{pointer-events:auto;height:34px;display:flex;align-items:center;gap:8px;padding:0 14px;border-radius:12px 12px 0 0;background:var(--ghb);color:var(--gt);font:600 14px var(--font-ui);cursor:grab;white-space:nowrap;overflow:hidden}
+.vp.panning .gh,.gh:active{cursor:grabbing}
+.gt{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.gc{font:500 11px var(--font-mono);opacity:.7;flex:none}
+.gh .tt-in{font:600 14px var(--font-ui);max-width:260px}
+.node.sel{outline:2px solid var(--accent);outline-offset:1px}
+.node.active{outline-color:var(--text)}
+.node.drop{outline:2px dashed var(--text-2);outline-offset:3px}
+.nh{height:30px;display:flex;align-items:center;gap:2px;padding:0 10px 0 4px;background:var(--ch);color:var(--ct);border-radius:7px 7px 0 0;font-weight:600;font-size:13px;cursor:default}
+.collapsed .nh{border-radius:7px}
+.tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tt-in{flex:1;min-width:0;font:600 13px var(--font-ui);color:inherit;background:rgba(0,0,0,.28);border:0;border-radius:4px;padding:3px 6px;outline:1px solid rgba(255,255,255,.45)}
+.cbtn{width:22px;height:22px;border:0;background:transparent;color:inherit;opacity:.8;border-radius:4px;display:grid;place-items:center;cursor:pointer;padding:0;flex:none}
+.cbtn:hover{background:rgba(0,0,0,.18);opacity:1}
+.cbtn svg{width:14px;height:14px;transition:transform .15s}
+.collapsed .cbtn svg{transform:rotate(-90deg)}
+.rows{padding:6px 0}
+.row{height:24px;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);padding:0 14px}
+.ro{justify-content:flex-end}
+.row .cnt{font:500 10.5px var(--font-mono);color:var(--text-3)}
+.collapsed .rows,.collapsed .note{display:none}
+.note{padding:0 12px 12px;font-size:12.5px;line-height:17px;color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.sock{position:absolute;width:12px;height:12px;border-radius:6px;background:var(--c);box-shadow:0 0 0 1.5px var(--ink);cursor:crosshair;z-index:1;transition:transform .1s}
+.sock::after{content:"";position:absolute;inset:-12px;border-radius:50%}
+@media (pointer:coarse){.sock::after{inset:-18px}}
+.sock:hover{transform:scale(1.3)}
+.sock.tgt{transform:scale(1.4);box-shadow:0 0 0 1.5px var(--ink),0 0 0 3.5px var(--text)}
+.so{right:-6px}
+.si{left:-6px}
+
+.box{position:absolute;border:1px solid var(--accent);background:var(--accent-soft);pointer-events:none;border-radius:2px}
+.knife{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.knife polyline{fill:none;stroke:var(--text);stroke-width:1.5;stroke-dasharray:5 4}
+.empty{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;text-align:center;padding:24px}
+.empty div{max-width:340px;color:var(--text-3)}
+.empty strong{display:block;font-family:var(--font-serif);font-weight:500;font-size:22px;color:var(--text-2);margin-bottom:6px}
+.zoomctl{position:absolute;right:calc(12px + env(safe-area-inset-right,0px));bottom:12px;display:flex;align-items:center;gap:2px;background:var(--bg);border:1px solid var(--line-strong);border-radius:10px;padding:3px;box-shadow:0 6px 16px rgba(0,0,0,.3)}
+.zoomctl .btn{height:28px}
+.zoomctl .btn.icon{width:28px}
+#zoomLbl{min-width:52px;font:500 12px var(--font-mono);color:var(--text-2);font-variant-numeric:tabular-nums}
+
+/* sidebar */
+.panel{width:300px;border-left:1px solid var(--line);background:var(--bg);overflow-y:auto;padding:18px 16px 24px;display:flex;flex-direction:column;gap:18px;min-height:0}
+.eyebrow{font:500 11px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--text-3)}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ph h2{margin:0;font-family:var(--font-serif);font-weight:500;font-size:20px;line-height:1.25;color:var(--text);text-wrap:balance;overflow-wrap:anywhere}
+.field{display:flex;flex-direction:column;gap:6px}
+.field>label,.lbl{font-size:12px;font-weight:500;color:var(--text-2)}
+.inp{width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 10px;font:14px/1.45 var(--font-ui);resize:vertical}
+.inp:focus{outline:none;border-color:var(--accent)}
+textarea.inp{min-height:96px}
+.sw-row{display:flex;flex-wrap:wrap;gap:6px}
+.sw{width:26px;height:26px;border-radius:7px;border:0;background:var(--sw);cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.25);padding:0;position:relative}
+.sw.on{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--text)}
+.sw-custom{background:conic-gradient(#d97757,#c99a2e,#6f9a5e,#3d8f84,#4f86c6,#7d70d4,#a35a9a,#c65a6b,#d97757);overflow:hidden;display:block}
+.sw-custom input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;border:0;padding:0}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2);cursor:pointer}
+.chk input{accent-color:var(--accent);width:15px;height:15px;margin:0}
+kbd{font:500 11px var(--font-mono);color:var(--text-2);background:var(--surface);border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:4px;padding:0 4px;white-space:nowrap}
+.conns{display:flex;flex-direction:column;gap:4px}
+.conn{display:grid;grid-template-columns:auto 38px minmax(0,1fr) auto;align-items:center;gap:8px;padding:4px 4px 4px 8px;border-radius:7px;background:var(--surface)}
+.cd{width:9px;height:9px;border-radius:5px}
+.cdir{font-size:11px;color:var(--text-3)}
+.cname{border:0;background:transparent;text-align:left;padding:2px 0;color:var(--text);font-size:13px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;border-radius:4px}
+.cname:hover{text-decoration:underline;text-underline-offset:3px}
+.cx{width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--text-3);cursor:pointer;display:grid;place-items:center;padding:0}
+.cx:hover{background:var(--surface-2);color:var(--danger)}
+.cx svg{width:12px;height:12px}
+.muted{margin:0;font-size:13px;color:var(--text-3);line-height:1.5}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stats div{background:var(--surface);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column}
+.stats b{font:500 22px var(--font-serif);font-variant-numeric:tabular-nums;color:var(--text)}
+.stats span{font-size:12px;color:var(--text-3)}
+.keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 12px;margin:0;font-size:12.5px;align-items:baseline}
+.keys dt{display:flex;gap:3px;flex-wrap:wrap}
+.keys dd{margin:0;color:var(--text-2)}
+.legend{display:flex;flex-direction:column;gap:2px}
+.legend button{display:flex;align-items:center;gap:8px;border:0;background:transparent;color:var(--text-2);font-size:13px;padding:4px 6px;border-radius:6px;cursor:pointer;text-align:left}
+.legend button:hover{background:var(--surface);color:var(--text)}
+.legend i{width:10px;height:10px;border-radius:3px;flex:none}
+.legend .n{margin-left:auto;font:500 11px var(--font-mono);color:var(--text-3)}
+.linkcard{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border-radius:999px;padding:3px 10px 3px 8px;max-width:100%;overflow:hidden}
+.chip i{width:9px;height:9px;border-radius:5px;flex:none}
+.chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* status bar */
+.status{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:5px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));border-top:1px solid var(--line);background:var(--bg);font-size:12px;color:var(--text-3);min-width:0}
+.hint{display:flex;gap:14px;overflow:hidden;white-space:nowrap;min-width:0}
+.hint span{display:inline-flex;gap:5px;align-items:center}
+#stats{white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* add menu */
+.menu{position:fixed;z-index:50;width:250px;background:var(--surface);border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.5);padding:6px;display:flex;flex-direction:column;gap:4px}
+.menu .mh{display:flex;justify-content:space-between;align-items:center;padding:4px 6px 2px}
+.menu .inp{padding:6px 9px;font-size:13px;background:var(--bg)}
+.mlist{display:flex;flex-direction:column;max-height:320px;overflow-y:auto}
+.mi{display:grid;grid-template-columns:12px minmax(0,1fr) auto;align-items:center;gap:9px;border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:6px;cursor:pointer;color:var(--text)}
+.mi.on,.mi:hover{background:var(--surface-2)}
+.mi i{width:12px;height:12px;border-radius:4px}
+.mi span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.mi small{font-size:11.5px;color:var(--text-3)}
+
+/* modal */
+.modal-bg{position:fixed;inset:0;z-index:60;background:rgba(10,10,9,.6);display:grid;place-items:center;padding:16px}
+.modal{width:min(540px,100%);max-height:100%;overflow-y:auto;box-sizing:border-box;background:var(--bg);border:1px solid var(--line-strong);border-radius:14px;padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.55);display:flex;flex-direction:column;gap:16px}
+.modal h2{margin:0;font-family:var(--font-serif);font-weight:500;font-size:22px}
+.fmts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fmt{position:relative;display:flex;flex-direction:column;gap:2px;padding:11px 12px;border:1px solid var(--line-strong);border-radius:10px;cursor:pointer;background:var(--bg)}
+.fmt input{position:absolute;opacity:0;pointer-events:none}
+.fmt b{font-weight:600;font-size:13.5px;display:flex;justify-content:space-between;gap:6px}
+.fmt b em{font:500 11px var(--font-mono);font-style:normal;color:var(--text-3)}
+.fmt span{font-size:12px;color:var(--text-3)}
+.fmt:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.fmt:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
+.fmt.off{opacity:.45;cursor:not-allowed}
+.fname{display:flex;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.fname:focus-within{border-color:var(--accent)}
+.fname input{flex:1;min-width:0;background:transparent;border:0;color:var(--text);padding:8px 10px;font:14px var(--font-ui);outline:none}
+.fname span{padding-right:10px;font:500 13px var(--font-mono);color:var(--text-3)}
+.mact{display:flex;justify-content:flex-end;gap:8px}
+#fallback{font:12px/1.5 var(--font-mono);min-height:120px}
+
+.toast{position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:70;background:var(--surface-2);color:var(--text);border:1px solid var(--line-strong);padding:8px 14px;border-radius:9px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.45);max-width:calc(100% - 32px)}
+.dropzone{position:absolute;inset:10px;border:2px dashed var(--accent);border-radius:12px;background:var(--accent-soft);display:grid;place-items:center;color:var(--text);font-weight:500;pointer-events:none}
+
+@media (max-width:760px){
+  .panel{position:absolute;right:0;top:0;bottom:0;z-index:20;width:min(320px,88vw);box-sizing:border-box;box-shadow:-12px 0 30px rgba(0,0,0,.45)}
+  .btn .bl{display:none}
+  .btn.hasl{width:32px;padding:0}
+  .hint{display:none}
+  .status{justify-content:flex-end}
+  .sep{margin:0 2px}
+  .opt{display:none}
+}
+@media (max-width:480px){ .wordmark{display:none} .fmts{grid-template-columns:1fr} }
+@media (prefers-reduced-motion:reduce){ .sock,.cbtn svg{transition:none} }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="brand" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M6 7c6 0 6 10 12 10" fill="none" stroke="#d97757" stroke-width="2.4" stroke-linecap="round"/><circle cx="5" cy="7" r="3" fill="#4f86c6" stroke="#141413" stroke-width="1.2"/><circle cx="19" cy="17" r="3" fill="#d97757" stroke="#141413" stroke-width="1.2"/></svg>
+      <span class="wordmark">Noodle Map</span>
+    </div>
+    <input id="mapName" class="mapname" aria-label="Map name" maxlength="120" spellcheck="false">
+    <div class="tools">
+      <button class="btn hasl" id="bNew" title="New map"><svg class="i" viewBox="0 0 16 16"><path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6L9 2z"/><path d="M9 2v4h4M8 8v4M6 10h4"/></svg><span class="bl">New</span></button>
+      <button class="btn hasl" id="bImport" title="Import a .json map or a Markdown outline (Ctrl O)"><svg class="i" viewBox="0 0 16 16"><path d="M8 10V2.5M5 5.5l3-3 3 3M2.5 10v2.5A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V10"/></svg><span class="bl">Import</span></button>
+      <button class="btn primary hasl" id="bSave" title="Save as (Ctrl S)"><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5V10M5 7l3 3 3-3M2.5 10v2.5A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V10"/></svg><span class="bl">Save as…</span></button>
+      <span class="sep"></span>
+      <button class="btn icon" id="bUndo" title="Undo (Ctrl Z)" aria-label="Undo"><svg class="i" viewBox="0 0 16 16"><path d="M5 3.5 2 6.5l3 3"/><path d="M2 6.5h7.5a3.5 3.5 0 0 1 0 7H7"/></svg></button>
+      <button class="btn icon" id="bRedo" title="Redo (Ctrl Shift Z)" aria-label="Redo"><svg class="i" viewBox="0 0 16 16"><path d="M11 3.5l3 3-3 3"/><path d="M14 6.5H6.5a3.5 3.5 0 0 0 0 7H9"/></svg></button>
+      <span class="sep opt"></span>
+      <button class="btn icon" id="bAdd" title="Add thought (Shift A)" aria-label="Add thought"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+      <button class="btn icon opt" id="bTidy" title="Tidy layout" aria-label="Tidy layout"><svg class="i" viewBox="0 0 16 16"><rect x="1.5" y="6" width="4" height="4" rx="1"/><rect x="10.5" y="2" width="4" height="4" rx="1"/><rect x="10.5" y="10" width="4" height="4" rx="1"/><path d="M5.5 8H8M8 4v8M8 4h2.5M8 12h2.5"/></svg></button>
+      <button class="btn icon" id="bPanel" title="Sidebar (N)" aria-label="Toggle sidebar"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M10 2.5v11"/></svg></button>
+    </div>
+  </header>
+
+  <main class="main">
+    <div id="vp" class="vp" aria-label="Mind map canvas">
+      <div id="world" class="world">
+        <div id="groups" class="groups"></div>
+        <svg id="links" class="links"><defs id="grads"></defs><g id="lg"></g><path id="tmpLinkSh"/><path id="tmpLink"/></svg>
+        <div id="nodes"></div>
+      </div>
+      <div id="box" class="box" hidden></div>
+      <svg class="knife"><polyline id="knifeLine" points=""/></svg>
+      <div id="empty" class="empty" hidden><div><strong>An empty map</strong>Double-click anywhere or press <kbd>Shift</kbd> <kbd>A</kbd> to add your first thought. You can also import a saved map or a Markdown outline.</div></div>
+      <div id="dropzone" class="dropzone" hidden>Drop a .json map or a Markdown outline to import it</div>
+      <div class="zoomctl">
+        <button class="btn icon" id="zOut" title="Zoom out" aria-label="Zoom out"><svg class="i" viewBox="0 0 16 16"><path d="M3.5 8h9"/></svg></button>
+        <button class="btn" id="zoomLbl" title="Reset to 100%">100%</button>
+        <button class="btn icon" id="zIn" title="Zoom in" aria-label="Zoom in"><svg class="i" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
+        <button class="btn icon" id="zFit" title="Frame all (Home)" aria-label="Frame all"><svg class="i" viewBox="0 0 16 16"><path d="M2.5 6V3.5a1 1 0 0 1 1-1H6M10 2.5h2.5a1 1 0 0 1 1 1V6M13.5 10v2.5a1 1 0 0 1-1 1H10M6 13.5H3.5a1 1 0 0 1-1-1V10"/></svg></button>
+      </div>
+    </div>
+    <aside id="panel" class="panel" aria-label="Sidebar"></aside>
+  </main>
+
+  <footer class="status">
+    <div class="hint" id="hint"></div>
+    <span id="stats"></span>
+  </footer>
+</div>
+
+<div id="addMenu" class="menu" hidden role="dialog" aria-label="Add thought">
+  <div class="mh"><span class="eyebrow">Add thought</span><kbd>Esc</kbd></div>
+  <input id="addSearch" class="inp" placeholder="Type a title or search types" autocomplete="off" spellcheck="false">
+  <div id="addList" class="mlist" role="listbox"></div>
+</div>
+
+<div id="modal" class="modal-bg" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="saveTitle">
+    <h2 id="saveTitle">Save as</h2>
+    <div class="fmts" id="fmts">
+      <label class="fmt"><input type="radio" name="fmt" value="json" checked><b>Mind map file <em>.json</em></b><span>Keeps everything. Open it again with Import.</span></label>
+      <label class="fmt"><input type="radio" name="fmt" value="png"><b>Image <em>.png</em></b><span>A picture of the whole map, for sharing.</span></label>
+      <label class="fmt"><input type="radio" name="fmt" value="svg"><b>Vector image <em>.svg</em></b><span>Sharp at any size. Opens in design tools.</span></label>
+      <label class="fmt"><input type="radio" name="fmt" value="md"><b>Outline <em>.md</em></b><span>The tree as a bulleted list. Cross-links are left out.</span></label>
+    </div>
+    <div class="field">
+      <label for="saveName">File name</label>
+      <div class="fname"><input id="saveName" spellcheck="false"><span id="saveExt">.json</span></div>
+    </div>
+    <p class="muted" id="saveNote"></p>
+    <textarea id="fallback" class="inp" readonly hidden aria-label="File contents to copy"></textarea>
+    <div class="mact">
+      <button class="btn outline" id="saveCancel">Cancel</button>
+      <button class="btn primary" id="saveGo">Save</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileIn" accept=".json,.md,.markdown,.txt,application/json,text/markdown,text/plain" hidden>
+<div id="toast" class="toast" hidden role="status"></div>
+
+<script>
+(() => {
+'use strict';
+/* ---------- constants ---------- */
+const W = 220, HH = 30, OUT_Y = 48, IN_Y = 72, SPREAD = 7, ZMIN = 0.2, ZMAX = 2.5;
+const LS = 'noodle-map:v1';
+const GP = 22, GTOP = 50;
+const C = {clay:'#d97757',amber:'#c99a2e',sage:'#6f9a5e',teal:'#3d8f84',sky:'#4f86c6',iris:'#7d70d4',plum:'#a35a9a',rose:'#c65a6b',stone:'#8a877d'};
+const PALETTE = [['Clay',C.clay],['Amber',C.amber],['Sage',C.sage],['Teal',C.teal],['Sky',C.sky],['Iris',C.iris],['Plum',C.plum],['Rose',C.rose],['Stone',C.stone]];
+const DEPTH_COLORS = [C.clay,C.sky,C.sage,C.amber,C.iris,C.teal,C.plum,C.rose];
+const PRESETS = [
+  {name:'Idea',color:C.clay,hint:'a new thought'},
+  {name:'Question',color:C.sky,hint:'to find out'},
+  {name:'Task',color:C.sage,hint:'to do'},
+  {name:'Goal',color:C.iris,hint:'an outcome'},
+  {name:'Decision',color:C.amber,hint:'a choice made'},
+  {name:'Reference',color:C.teal,hint:'a source'},
+  {name:'Risk',color:C.rose,hint:'could go wrong'},
+  {name:'Note',color:C.stone,hint:'plain context'},
+];
+const CHEV = '<svg class="i" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg>';
+const XICON = '<svg class="i" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+
+const $ = s => document.querySelector(s);
+const vp = $('#vp'), world = $('#world'), nodesEl = $('#nodes'), lg = $('#lg'), grads = $('#grads');
+const tmpLink = $('#tmpLink'), tmpLinkSh = $('#tmpLinkSh'), boxEl = $('#box'), knifeLine = $('#knifeLine');
+const panel = $('#panel'), mapName = $('#mapName'), groupsEl = $('#groups');
+
+/* ---------- helpers ---------- */
+let idc = 0;
+const uid = () => 'n' + Date.now().toString(36).slice(-4) + (idc++).toString(36) + Math.random().toString(36).slice(2, 6);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const num = v => (typeof v === 'number' && isFinite(v)) ? v : (isFinite(+v) ? +v : 0);
+const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : String(v)).slice(0, max);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hexRGB = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
+const rgbHex = a => '#' + a.map(v => clamp(Math.round(v),0,255).toString(16).padStart(2,'0')).join('');
+const mix = (a, b, t) => { const A = hexRGB(a), B = hexRGB(b); return rgbHex(A.map((v,i) => v + (B[i]-v)*t)); };
+const lum = h => { const [r,g,b] = hexRGB(h).map(v => { v /= 255; return v <= .03928 ? v/12.92 : Math.pow((v+.055)/1.055, 2.4); }); return .2126*r + .7152*g + .0722*b; };
+const headCol = c => mix(c, '#1f1e1d', .2);
+const textOn = bg => lum(bg) > .21 ? '#1f1e1d' : '#faf9f5';
+const rgba = (h, a) => { const [r, g, b] = hexRGB(h); return `rgba(${r},${g},${b},${a})`; };
+const isHex = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+
+/* ---------- state ---------- */
+let doc, sel = new Set(), active = null, selLink = null, selGroup = null;
+let undoStack = [], redoStack = [];
+const els = new Map();
+let panelOpen = window.innerWidth > 760;
+let dl = null;
+
+const nodeMap = () => new Map(doc.nodes.map(n => [n.id, n]));
+const byId = id => doc.nodes.find(n => n.id === id);
+const hasLink = (a, as, b, bs) => doc.links.some(l => (l.from === a && fsOf(l) === as && l.to === b && tsOf(l) === bs) || (l.from === b && fsOf(l) === bs && l.to === a && tsOf(l) === as));
+
+function snapshot(){ return JSON.stringify({name: doc.name, nodes: doc.nodes, links: doc.links, groups: doc.groups}); }
+function commit(){ undoStack.push(snapshot()); if (undoStack.length > 150) undoStack.shift(); redoStack = []; }
+function restore(s){
+  const d = JSON.parse(s); doc.name = d.name; doc.nodes = d.nodes; doc.links = d.links; doc.groups = d.groups || [];
+  const ids = new Set(doc.nodes.map(n => n.id));
+  sel = new Set([...sel].filter(id => ids.has(id))); if (!ids.has(active)) active = null;
+  if (selLink && !doc.links.some(l => l.id === selLink)) selLink = null;
+  if (selGroup && !doc.groups.some(g => g.id === selGroup)) selGroup = null;
+  refresh();
+}
+function undo(){ if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
+function redo(){ if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
+
+let persistT = 0;
+function persist(){ clearTimeout(persistT); persistT = setTimeout(() => { try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) {} }, 250); }
+
+function sanitize(o){
+  if (!o || typeof o !== 'object' || !Array.isArray(o.nodes)) return null;
+  const idMap = new Map(), nodes = [];
+  for (const r of o.nodes.slice(0, 5000)) {
+    if (!r || typeof r !== 'object') continue;
+    const id = uid(); idMap.set(String(r.id), id);
+    nodes.push({id, x: Math.round(num(r.x)), y: Math.round(num(r.y)), title: str(r.title, 200).trim() || 'Untitled', note: str(r.note, 5000), color: isHex(r.color) ? r.color.toLowerCase() : C.clay, collapsed: !!r.collapsed});
+  }
+  const links = [], seen = new Set();
+  for (const l of (Array.isArray(o.links) ? o.links : [])) {
+    const a = idMap.get(String(l && l.from)), b = idMap.get(String(l && l.to));
+    const fs = l && l.fs === 'in' ? 'in' : 'out', ts = l && l.ts === 'out' ? 'out' : 'in';
+    const k1 = a + fs + '>' + b + ts, k2 = b + ts + '>' + a + fs;
+    if (!a || !b || a === b || seen.has(k1) || seen.has(k2)) continue;
+    seen.add(k1); links.push({id: uid(), from: a, to: b, fs, ts});
+  }
+  const groups = [], used = new Set();
+  for (const g of (Array.isArray(o.groups) ? o.groups : []).slice(0, 500)) {
+    if (!g || !Array.isArray(g.members)) continue;
+    const mem = [...new Set(g.members.map(x => idMap.get(String(x))).filter(Boolean))].filter(id => !used.has(id));
+    if (!mem.length) continue;
+    mem.forEach(id => used.add(id));
+    groups.push({id: uid(), title: str(g.title, 120).trim() || 'Group', color: isHex(g.color) ? g.color.toLowerCase() : C.stone, members: mem});
+  }
+  const v = o.view || {};
+  return {version: 1, name: str(o.name, 120).trim() || 'Untitled map', nodes, links, groups, view: {x: num(v.x), y: num(v.y), z: clamp(num(v.z) || 1, ZMIN, ZMAX)}};
+}
+
+function sampleDoc(){
+  const mk = (title, color, note) => ({id: uid(), x: 0, y: 0, title, color, note: note || '', collapsed: false});
+  const root = mk('Launch a podcast', C.clay, 'Goal: three episodes live by March.');
+  const fmt = mk('Format', C.sky, 'Interviews, 30–40 minutes, every other week.');
+  const aud = mk('Who is it for?', C.iris, 'Early-career designers? Hiring managers?');
+  const gear = mk('Equipment', C.amber, 'Two USB mics, a quiet room, free editing software.');
+  const dist = mk('Distribution', C.teal, 'Spotify, Apple Podcasts, short video clips.');
+  const guests = mk('Guest shortlist', C.sage, 'Reach out to five people this month.');
+  const outline = mk('Episode outline', C.sky, 'Intro · story · lessons · one recommendation.');
+  const art = mk('Cover art', C.plum, '');
+  const risk = mk('Running out of guests', C.rose, 'Keep a backlog of solo episodes.');
+  const L = (a, b) => ({id: uid(), from: a.id, to: b.id});
+  return {version: 1, name: 'Example: podcast launch', view: {x: 0, y: 0, z: 1},
+    nodes: [root, fmt, aud, gear, dist, guests, outline, art, risk],
+    links: [L(root, fmt), L(root, aud), L(root, gear), L(root, dist), L(fmt, guests), L(fmt, outline), L(aud, guests), L(dist, art), L(guests, risk)], groups: []};
+}
+
+/* ---------- geometry ---------- */
+const outPt = n => ({x: n.x + W, y: n.y + (n.collapsed ? HH/2 : OUT_Y)});
+const inBase = n => n.y + (n.collapsed ? HH/2 : IN_Y);
+const sidePt = (n, side) => side === 'out' ? outPt(n) : {x: n.x, y: inBase(n)};
+const fsOf = l => l.fs === 'in' ? 'in' : 'out';
+const tsOf = l => l.ts === 'out' ? 'out' : 'in';
+const DIR = {out: 1, in: -1};
+function ctrl(p1, p2, s1, s2){
+  const d = s1 === s2 ? Math.max(60, Math.abs(p2.x - p1.x) * .5 + Math.abs(p2.y - p1.y) * .15) : Math.max(40, Math.abs(p2.x - p1.x) * .5);
+  return [{x: p1.x + DIR[s1] * d, y: p1.y}, {x: p2.x + DIR[s2] * d, y: p2.y}];
+}
+function curve(p1, p2, s1 = 'out', s2 = 'in'){
+  const [c1, c2] = ctrl(p1, p2, s1, s2);
+  return `M${p1.x},${p1.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${p2.x},${p2.y}`;
+}
+function computeEnds(){
+  const m = nodeMap(), groups = new Map(), ends = new Map(), pos = new Map();
+  const put = (key, l, end) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push([l, end]); };
+  for (const l of doc.links) {
+    if (!m.has(l.from) || !m.has(l.to)) continue;
+    put(l.from + ':' + fsOf(l), l, 0); put(l.to + ':' + tsOf(l), l, 1);
+  }
+  for (const [key, arr] of groups) {
+    const [id, side] = key.split(':'), base = sidePt(m.get(id), side);
+    const other = ([l, end]) => end === 0 ? sidePt(m.get(l.to), tsOf(l)) : sidePt(m.get(l.from), fsOf(l));
+    arr.sort((a, b) => (other(a).y - other(b).y) || (other(a).x - other(b).x));
+    arr.forEach(([l, end], i) => { if (!pos.has(l.id)) pos.set(l.id, []); pos.get(l.id)[end] = {x: base.x, y: base.y + (i - (arr.length-1)/2) * SPREAD}; });
+  }
+  for (const l of doc.links) { const p = pos.get(l.id); if (p) ends.set(l.id, [p[0], p[1], m.get(l.from), m.get(l.to), fsOf(l), tsOf(l)]); }
+  return {ends, groups};
+}
+function bez(p1, p2, t, s1 = 'out', s2 = 'in'){
+  const [c1, c2] = ctrl(p1, p2, s1, s2), u = 1-t;
+  return {x: u*u*u*p1.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*p2.x, y: u*u*u*p1.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*p2.y};
+}
+function segX(a, b, c, d){
+  const r = (b.x-a.x)*(d.y-c.y) - (b.y-a.y)*(d.x-c.x); if (!r) return false;
+  const t = ((c.x-a.x)*(d.y-c.y) - (c.y-a.y)*(d.x-c.x)) / r, u = ((c.x-a.x)*(b.y-a.y) - (c.y-a.y)*(b.x-a.x)) / r;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+/* ---------- view ---------- */
+function applyView(){
+  const v = doc.view;
+  world.style.transform = `translate(${v.x}px,${v.y}px) scale(${v.z})`;
+  const M = 100 * v.z; let m = 20 * v.z; if (m < 9) m = M;
+  vp.style.backgroundSize = `${M}px ${M}px,${M}px ${M}px,${m}px ${m}px,${m}px ${m}px`;
+  vp.style.backgroundPosition = `${v.x}px ${v.y}px`;
+  $('#zoomLbl').textContent = Math.round(v.z * 100) + '%';
+}
+function toWorld(cx, cy){ const r = vp.getBoundingClientRect(), v = doc.view; return {x: (cx - r.left - v.x) / v.z, y: (cy - r.top - v.y) / v.z}; }
+function zoomAt(cx, cy, factor){
+  const r = vp.getBoundingClientRect(), v = doc.view, w = toWorld(cx, cy);
+  v.z = clamp(v.z * factor, ZMIN, ZMAX);
+  v.x = cx - r.left - w.x * v.z; v.y = cy - r.top - w.y * v.z;
+  applyView(); persist();
+}
+const hOf = n => (els.get(n.id) && els.get(n.id).offsetHeight) || (n.collapsed ? HH : 90);
+function fit(ids){
+  const list = ids && ids.length ? doc.nodes.filter(n => ids.includes(n.id)) : doc.nodes;
+  const r = vp.getBoundingClientRect(), v = doc.view;
+  if (!list.length) { v.z = 1; v.x = r.width/2; v.y = r.height/2; applyView(); return; }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of list) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + W); y1 = Math.max(y1, n.y + hOf(n)); }
+  const pad = r.width < 500 ? 32 : 72, bw = x1 - x0, bh = y1 - y0;
+  v.z = clamp(Math.min((r.width - pad*2) / bw, (r.height - pad*2) / bh), ZMIN, 1.15);
+  if (!isFinite(v.z) || v.z <= 0) v.z = 1;
+  v.x = r.width/2 - (x0 + bw/2) * v.z; v.y = r.height/2 - (y0 + bh/2) * v.z;
+  applyView(); persist();
+}
+
+/* ---------- rendering ---------- */
+const NODE_TPL = `<div class="nh"><button class="cbtn" data-act="collapse" tabindex="-1">${CHEV}</button><span class="tt"></span></div><div class="rows"><div class="row ro"><span class="cnt" data-c="out"></span>Out</div><div class="row ri">In<span class="cnt" data-c="in"></span></div></div><div class="note"></div><span class="sock so" data-sock="out"></span><span class="sock si" data-sock="in"></span>`;
+function syncNode(n){
+  let el = els.get(n.id);
+  if (!el) { el = document.createElement('div'); el.className = 'node'; el.dataset.id = n.id; el.innerHTML = NODE_TPL; nodesEl.appendChild(el); els.set(n.id, el); }
+  el.style.transform = `translate(${n.x}px,${n.y}px)`;
+  const hc = headCol(n.color);
+  el.style.setProperty('--c', n.color); el.style.setProperty('--ch', hc); el.style.setProperty('--ct', textOn(hc));
+  el.classList.toggle('collapsed', !!n.collapsed);
+  el.classList.toggle('sel', sel.has(n.id));
+  el.classList.toggle('active', active === n.id && sel.has(n.id));
+  el.querySelector('.cbtn').setAttribute('aria-label', n.collapsed ? 'Expand' : 'Collapse');
+  const tt = el.querySelector('.tt'); if (tt.textContent !== n.title) tt.textContent = n.title;
+  const note = el.querySelector('.note'); if (note.textContent !== n.note) note.textContent = n.note || ''; note.hidden = !n.note;
+}
+function syncAll(){
+  const ids = new Set();
+  for (const n of doc.nodes) { ids.add(n.id); syncNode(n); }
+  for (const [id, el] of els) if (!ids.has(id)) { el.remove(); els.delete(id); }
+}
+function renderLinks(){
+  const {ends, groups} = computeEnds();
+  let g = '', d = '';
+  for (const l of doc.links) {
+    const e = ends.get(l.id); if (!e) continue;
+    const [p1, p2, a, b, s1, s2] = e, path = curve(p1, p2, s1, s2);
+    d += `<linearGradient id="g_${l.id}" gradientUnits="userSpaceOnUse" x1="${p1.x}" y1="${p1.y}" x2="${p2.x === p1.x ? p2.x + .01 : p2.x}" y2="${p2.y}"><stop offset="0" stop-color="${a.color}"/><stop offset="1" stop-color="${b.color}"/></linearGradient>`;
+    const hot = sel.has(a.id) || sel.has(b.id);
+    g += `<g class="lk${hot ? ' hot' : ''}${selLink === l.id ? ' picked' : ''}" data-link="${l.id}"><path class="lk-sh" d="${path}"/><path class="lk-c" d="${path}" stroke="url(#g_${l.id})"/><path class="lk-hit" d="${path}"/></g>`;
+  }
+  grads.innerHTML = d; lg.innerHTML = g;
+  renderGroups();
+  const sockH = c => 12 + Math.max(0, c - 1) * SPREAD;
+  for (const n of doc.nodes) {
+    const el = els.get(n.id); if (!el) continue;
+    const ic = (groups.get(n.id + ':in') || []).length, oc = (groups.get(n.id + ':out') || []).length, hi = sockH(ic), ho = sockH(oc);
+    const si = el.querySelector('.si'); si.style.height = hi + 'px'; si.style.top = inBase(n) - n.y - hi/2 + 'px';
+    const so = el.querySelector('.so'); so.style.height = ho + 'px'; so.style.top = outPt(n).y - n.y - ho/2 + 'px';
+    el.querySelector('[data-c="in"]').textContent = ic > 1 ? '×' + ic : '';
+    el.querySelector('[data-c="out"]').textContent = oc > 1 ? '×' + oc : '';
+  }
+}
+function refresh(){ pruneGroups(); syncAll(); renderLinks(); renderPanel(); updateChrome(); persist(); }
+function updateChrome(){
+  const n = doc.nodes.length, l = doc.links.length;
+  $('#stats').textContent = `${n} ${n === 1 ? 'thought' : 'thoughts'} · ${l} ${l === 1 ? 'link' : 'links'}`;
+  $('#bUndo').disabled = !undoStack.length; $('#bRedo').disabled = !redoStack.length;
+  if (document.activeElement !== mapName) mapName.value = doc.name;
+  $('#empty').hidden = n > 0;
+  $('#bPanel').classList.toggle('on', panelOpen);
+  panel.hidden = !panelOpen;
+}
+
+/* ---------- status hints ---------- */
+const K = s => s.split(' ').map(k => `<kbd>${esc(k)}</kbd>`).join(' ');
+const HINTS = {
+  idle: [['Drag any socket','to connect'],[K('Alt') + ' + drag socket','detach'],[K('Shift A'),'add'],[K('Ctrl G'),'group'],[K('X'),'delete'],[K('Ctrl') + ' + right-drag','cut links'],['Scroll','zoom'],['Middle / right drag','pan']],
+  link: [['Release on any socket','to connect them'],['Release on a thought','to use its opposite socket'],['Release on empty space','to add a connected thought']],
+  move: [[K('Ctrl'),'snap to grid']],
+  knife: [['Release','to cut every link the line crosses']],
+  box: [[K('Shift'),'add to selection']],
+};
+function setHint(mode){ $('#hint').innerHTML = (HINTS[mode] || HINTS.idle).map(([a, b]) => `<span>${a.includes('<kbd>') ? a : esc(a)} <span>${esc(b)}</span></span>`).join(''); }
+
+/* ---------- pointer interaction ---------- */
+let drag = null, spaceDown = false, lastMouse = {x: innerWidth/2, y: innerHeight/2};
+const touches = new Map();
+let dropEl = null;
+function setDrop(el){ if (dropEl === el) return; if (dropEl) dropEl.classList.remove('drop'); dropEl = el; if (el) el.classList.add('drop'); }
+let dropSock = null;
+function setDropSock(el){ if (dropSock === el) return; if (dropSock) dropSock.classList.remove('tgt'); dropSock = el; if (el) el.classList.add('tgt'); }
+
+function beginPan(e, tapClear){ drag = {type: 'pan', pid: e.pointerId, sx: e.clientX, sy: e.clientY, vx: doc.view.x, vy: doc.view.y, moved: false, tapClear}; vp.classList.add('panning'); }
+
+vp.addEventListener('pointerdown', e => {
+  if (e.target.closest('input,textarea,button,.zoomctl')) return;
+  if (!$('#addMenu').hidden) closeMenu();
+  if (e.pointerType === 'touch') {
+    touches.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (touches.size === 2) { startPinch(); return; }
+    if (touches.size > 2) return;
+  }
+  const sock = e.target.closest('.sock'), nodeEl = e.target.closest('.node'), linkEl = e.target.closest('[data-link]'), grpEl = e.target.closest('.gh');
+  const onEmpty = !nodeEl && !linkEl && !grpEl;
+  const base = {pid: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false};
+  if (e.button === 1 || (e.button === 0 && spaceDown) || (e.button === 2 && !e.ctrlKey && !e.metaKey)) { beginPan(e); }
+  else if ((e.button === 2 && (e.ctrlKey || e.metaKey)) || (e.button === 0 && (e.ctrlKey || e.altKey) && onEmpty && e.pointerType !== 'touch')) {
+    drag = {...base, type: 'knife', pts: [{x: e.clientX, y: e.clientY}]}; vp.classList.add('cutting'); setHint('knife');
+  }
+  else if (e.button !== 0) return;
+  else if (sock && nodeEl) {
+    const n = byId(nodeEl.dataset.id), side = sock.dataset.sock;
+    let det = null;
+    if (e.altKey) {
+      const {ends} = computeEnds(), w = toWorld(e.clientX, e.clientY); let bd = Infinity;
+      for (const l of doc.links) {
+        const en = ends.get(l.id); if (!en) continue;
+        let p = null, keep = null;
+        if (l.from === n.id && fsOf(l) === side) { p = en[0]; keep = 'to'; }
+        else if (l.to === n.id && tsOf(l) === side) { p = en[1]; keep = 'from'; }
+        if (p && Math.abs(p.y - w.y) < bd) { bd = Math.abs(p.y - w.y); det = {l, keep}; }
+      }
+    }
+    if (det) {
+      const l = det.l, keepTo = det.keep === 'to';
+      drag = {...base, type: 'link', from: keepTo ? l.to : l.from, side: keepTo ? tsOf(l) : fsOf(l), detach: l.id};
+    } else drag = {...base, type: 'link', from: n.id, side};
+    setHint('link');
+  }
+  else if (nodeEl) {
+    const id = nodeEl.dataset.id;
+    if (e.shiftKey) { if (sel.has(id) && active === id) { sel.delete(id); active = null; } else { sel.add(id); active = id; } }
+    else if (!sel.has(id)) { sel = new Set([id]); active = id; }
+    else active = id;
+    selLink = null; selGroup = null;
+    if (nodesEl.lastElementChild !== nodeEl) nodesEl.appendChild(nodeEl);
+    const start = new Map(); for (const sid of sel) { const n = byId(sid); if (n) start.set(sid, {x: n.x, y: n.y}); }
+    drag = {...base, type: 'move', id, start, shift: e.shiftKey};
+    refreshSelection(); setHint('move');
+  }
+  else if (grpEl) {
+    const gid = grpEl.closest('.group').dataset.gid, g = doc.groups.find(x => x.id === gid);
+    selGroup = gid; sel.clear(); active = null; selLink = null;
+    const start = new Map(); if (g) for (const id of g.members) { const n = byId(id); if (n) start.set(id, {x: n.x, y: n.y}); }
+    drag = {...base, type: 'move', id: null, group: gid, start, shift: false};
+    refreshSelection(); setHint('move');
+  }
+  else if (linkEl) { selLink = linkEl.dataset.link; sel.clear(); active = null; selGroup = null; refreshSelection(); }
+  else if (e.pointerType === 'touch') beginPan(e, true);
+  else { drag = {...base, type: 'box', shift: e.shiftKey, base: e.shiftKey ? new Set(sel) : new Set()}; setHint('box'); }
+  if (drag) { try { vp.setPointerCapture(e.pointerId); } catch (_) {} }
+});
+
+vp.addEventListener('pointermove', e => {
+  lastMouse = {x: e.clientX, y: e.clientY};
+  if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+    touches.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (drag && drag.type === 'pinch') { updatePinch(); return; }
+  }
+  if (!drag || e.pointerId !== drag.pid) return;
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if (!drag.moved && Math.hypot(dx, dy) > 3) drag.moved = true;
+  const z = doc.view.z;
+  switch (drag.type) {
+    case 'pan': doc.view.x = drag.vx + dx; doc.view.y = drag.vy + dy; applyView(); break;
+    case 'move': {
+      if (!drag.moved) return;
+      if (!drag.committed) { commit(); drag.committed = true; }
+      for (const [id, p] of drag.start) {
+        const n = byId(id); if (!n) continue;
+        let x = p.x + dx/z, y = p.y + dy/z;
+        if (e.ctrlKey || e.metaKey) { x = Math.round(x/20)*20; y = Math.round(y/20)*20; }
+        n.x = Math.round(x); n.y = Math.round(y); syncNode(n);
+      }
+      renderLinks(); break;
+    }
+    case 'box': {
+      const r = vp.getBoundingClientRect();
+      const x0 = Math.min(drag.sx, e.clientX), y0 = Math.min(drag.sy, e.clientY), x1 = Math.max(drag.sx, e.clientX), y1 = Math.max(drag.sy, e.clientY);
+      Object.assign(boxEl.style, {left: x0 - r.left + 'px', top: y0 - r.top + 'px', width: x1 - x0 + 'px', height: y1 - y0 + 'px'});
+      boxEl.hidden = !drag.moved;
+      if (!drag.moved) return;
+      const a = toWorld(x0, y0), b = toWorld(x1, y1);
+      sel = new Set(drag.base);
+      for (const n of doc.nodes) if (n.x < b.x && n.x + W > a.x && n.y < b.y && n.y + hOf(n) > a.y) sel.add(n.id);
+      for (const n of doc.nodes) { const el = els.get(n.id); el.classList.toggle('sel', sel.has(n.id)); el.classList.remove('active'); }
+      break;
+    }
+    case 'link': {
+      if (drag.detach && drag.moved) { commit(); doc.links = doc.links.filter(l => l.id !== drag.detach); drag.detach = null; drag.committed = true; renderLinks(); }
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      const tEl = hit && hit.closest ? hit.closest('.node') : null;
+      const tSock = hit && hit.closest ? hit.closest('.sock') : null;
+      let t = tEl ? byId(tEl.dataset.id) : null; if (t && t.id === drag.from) t = null;
+      const tSide = t ? (tSock ? tSock.dataset.sock : (drag.side === 'out' ? 'in' : 'out')) : null;
+      setDrop(t ? tEl : null); setDropSock(t ? tEl.querySelector(tSide === 'out' ? '.so' : '.si') : null);
+      drag.target = t ? t.id : null; drag.tside = tSide;
+      const s = byId(drag.from), w = toWorld(e.clientX, e.clientY);
+      const p1 = sidePt(s, drag.side), p2 = t ? sidePt(t, tSide) : w;
+      const s2 = t ? tSide : (w.x >= p1.x ? 'in' : 'out');
+      const path = drag.moved ? curve(p1, p2, drag.side, s2) : '';
+      tmpLink.setAttribute('d', path); tmpLinkSh.setAttribute('d', path); tmpLink.style.stroke = s.color;
+      break;
+    }
+    case 'knife': {
+      const last = drag.pts[drag.pts.length - 1];
+      if (Math.hypot(e.clientX - last.x, e.clientY - last.y) > 4) drag.pts.push({x: e.clientX, y: e.clientY});
+      const r = vp.getBoundingClientRect();
+      knifeLine.setAttribute('points', drag.pts.map(p => `${p.x - r.left},${p.y - r.top}`).join(' '));
+      break;
+    }
+  }
+});
+
+function endPointer(e){
+  if (e.pointerType === 'touch') {
+    touches.delete(e.pointerId);
+    if (drag && drag.type === 'pinch') { if (touches.size < 2) { drag = null; persist(); } return; }
+  }
+  if (!drag || e.pointerId !== drag.pid) return;
+  const d = drag; drag = null;
+  vp.classList.remove('panning', 'cutting');
+  switch (d.type) {
+    case 'pan': if (d.tapClear && !d.moved) { sel.clear(); active = null; selLink = null; selGroup = null; refreshSelection(); } persist(); break;
+    case 'move': if (!d.moved && !d.shift && !d.group) { sel = new Set([d.id]); active = d.id; } if (d.moved && !d.group) joinOnDrop([...d.start.keys()]); refresh(); break;
+    case 'box': boxEl.hidden = true; selGroup = null; if (!d.moved) { if (!d.shift) { sel.clear(); active = null; } selLink = null; } else if (!sel.has(active)) active = sel.size ? [...sel][sel.size - 1] : null; refresh(); break;
+    case 'link': {
+      tmpLink.setAttribute('d', ''); tmpLinkSh.setAttribute('d', ''); setDrop(null); setDropSock(null);
+      if (d.target) {
+        let a = d.from, as = d.side, b = d.target, bs = d.tside;
+        if (as === 'in' && bs === 'out') [a, as, b, bs] = [b, bs, a, as];
+        if (!hasLink(a, as, b, bs)) { if (!d.committed) commit(); doc.links.push({id: uid(), from: a, to: b, fs: as, ts: bs}); }
+        refresh();
+      } else if (d.moved && e.type !== 'pointercancel') { refresh(); openMenu(e.clientX, e.clientY, {from: d.from, side: d.side}); }
+      else refresh();
+      break;
+    }
+    case 'knife': {
+      knifeLine.setAttribute('points', '');
+      const pts = d.pts.map(p => toWorld(p.x, p.y));
+      if (pts.length < 2) break;
+      const {ends} = computeEnds(), cut = new Set();
+      for (const l of doc.links) {
+        const en = ends.get(l.id); if (!en) continue;
+        let prev = en[0];
+        outer: for (let i = 1; i <= 24; i++) {
+          const cur = bez(en[0], en[1], i/24, en[4], en[5]);
+          for (let j = 1; j < pts.length; j++) if (segX(prev, cur, pts[j-1], pts[j])) { cut.add(l.id); break outer; }
+          prev = cur;
+        }
+      }
+      if (cut.size) { commit(); doc.links = doc.links.filter(l => !cut.has(l.id)); toast(`Cut ${cut.size} ${cut.size === 1 ? 'link' : 'links'}`); refresh(); }
+      break;
+    }
+  }
+  setHint();
+}
+vp.addEventListener('pointerup', endPointer);
+vp.addEventListener('pointercancel', endPointer);
+vp.addEventListener('contextmenu', e => e.preventDefault());
+
+function startPinch(){
+  const [a, b] = [...touches.values()];
+  if (drag && drag.type === 'box') boxEl.hidden = true;
+  tmpLink.setAttribute('d', ''); tmpLinkSh.setAttribute('d', ''); setDrop(null);
+  drag = {type: 'pinch', dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: doc.view.z, w: toWorld((a.x + b.x)/2, (a.y + b.y)/2)};
+}
+function updatePinch(){
+  const [a, b] = [...touches.values()], r = vp.getBoundingClientRect(), v = doc.view;
+  const cx = (a.x + b.x)/2, cy = (a.y + b.y)/2;
+  v.z = clamp(drag.z * Math.hypot(a.x - b.x, a.y - b.y) / drag.dist, ZMIN, ZMAX);
+  v.x = cx - r.left - drag.w.x * v.z; v.y = cy - r.top - drag.w.y * v.z; applyView();
+}
+
+vp.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey) { zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * .01)); return; }
+  const trackpad = e.deltaX !== 0 || (e.deltaMode === 0 && Math.abs(e.deltaY) < 40 && !Number.isInteger(e.deltaY));
+  if (trackpad || e.shiftKey) { doc.view.x -= e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX; doc.view.y -= e.shiftKey && !e.deltaX ? 0 : e.deltaY; applyView(); persist(); }
+  else zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1/1.12);
+}, {passive: false});
+
+vp.addEventListener('dblclick', e => {
+  if (e.target.closest('.zoomctl,input,.sock,[data-act]')) return;
+  const nodeEl = e.target.closest('.node');
+  if (nodeEl) {
+    if (e.target.closest('.note')) { sel = new Set([nodeEl.dataset.id]); active = nodeEl.dataset.id; panelOpen = true; refresh(); const t = $('#pNote'); if (t) t.focus(); }
+    else startRename(nodeEl.dataset.id);
+    return;
+  }
+  const gh = e.target.closest('.gh'); if (gh) { startGroupRename(gh.closest('.group').dataset.gid); return; }
+  if (e.target.closest('[data-link]')) return;
+  const w = toWorld(e.clientX, e.clientY);
+  const inG = doc.groups.find(g => { const b = gBounds.get(g.id); return b && w.x > b.x && w.x < b.x + b.w && w.y > b.y && w.y < b.y + b.h; });
+  addNode(PRESETS[0], {x: w.x - W/2, y: w.y - HH/2}, {group: inG && inG.id});
+});
+
+nodesEl.addEventListener('click', e => {
+  const b = e.target.closest('[data-act="collapse"]'); if (!b) return;
+  const n = byId(b.closest('.node').dataset.id); if (!n) return;
+  commit(); n.collapsed = !n.collapsed; refresh();
+});
+
+/* ---------- groups ---------- */
+const gEls = new Map(); let gBounds = new Map();
+const curGroup = () => doc.groups.find(g => g.id === selGroup);
+const groupOf = id => doc.groups.find(g => g.members.includes(id));
+function pruneGroups(){
+  const ids = new Set(doc.nodes.map(n => n.id)), seen = new Set();
+  doc.groups = doc.groups.filter(g => { g.members = g.members.filter(id => ids.has(id) && !seen.has(id)); g.members.forEach(id => seen.add(id)); return g.members.length > 0; });
+  if (selGroup && !doc.groups.some(g => g.id === selGroup)) selGroup = null;
+}
+function groupRect(g, hFn){
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, k = 0;
+  for (const id of g.members) { const n = byId(id); if (!n) continue; k++; x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + W); y1 = Math.max(y1, n.y + hFn(n)); }
+  return k ? {x: x0 - GP, y: y0 - GTOP, w: x1 - x0 + GP*2, h: y1 - y0 + GTOP + GP, k} : null;
+}
+function renderGroups(){
+  gBounds = new Map(); const keep = new Set();
+  for (const g of doc.groups) {
+    const b = groupRect(g, hOf); if (!b) continue;
+    gBounds.set(g.id, b); keep.add(g.id);
+    let el = gEls.get(g.id);
+    if (!el) { el = document.createElement('div'); el.className = 'group'; el.dataset.gid = g.id; el.innerHTML = '<div class="gh" title="Drag to move the group · double-click to rename"><span class="gt"></span><span class="gc"></span></div>'; groupsEl.appendChild(el); gEls.set(g.id, el); }
+    el.style.transform = `translate(${b.x}px,${b.y}px)`; el.style.width = b.w + 'px'; el.style.height = b.h + 'px';
+    el.style.setProperty('--gf', rgba(g.color, .09)); el.style.setProperty('--gb', rgba(g.color, .5));
+    el.style.setProperty('--ghb', rgba(g.color, .2)); el.style.setProperty('--gt', mix(g.color, '#faf9f5', .5));
+    el.classList.toggle('sel', selGroup === g.id);
+    const gt = el.querySelector('.gt'); if (gt.textContent !== g.title) gt.textContent = g.title;
+    el.querySelector('.gc').textContent = b.k;
+  }
+  for (const [id, el] of gEls) if (!keep.has(id)) { el.remove(); gEls.delete(id); }
+}
+function groupSelection(){
+  const ids = [...sel].filter(id => byId(id));
+  if (!ids.length) { toast('Select one or more thoughts first, then press Ctrl G'); return; }
+  commit();
+  doc.groups.forEach(g => g.members = g.members.filter(id => !ids.includes(id)));
+  const counts = new Map(); ids.forEach(id => { const c = byId(id).color; counts.set(c, (counts.get(c) || 0) + 1); });
+  const g = {id: uid(), title: 'Group', color: [...counts].sort((a, b) => b[1] - a[1])[0][0], members: ids};
+  doc.groups.push(g); selGroup = g.id; sel.clear(); active = null; selLink = null;
+  refresh(); startGroupRename(g.id, true);
+}
+function ungroup(){
+  const targets = selGroup ? doc.groups.filter(g => g.id === selGroup) : doc.groups.filter(g => g.members.some(id => sel.has(id)));
+  if (!targets.length) return;
+  commit(); const t = new Set(targets.map(g => g.id));
+  doc.groups = doc.groups.filter(g => !t.has(g.id)); selGroup = null; refresh();
+  toast(targets.length === 1 ? `Ungrouped “${targets[0].title}” · thoughts kept` : `Removed ${targets.length} groups · thoughts kept`);
+}
+function leaveGroup(){
+  const ids = [...sel].filter(id => groupOf(id)); if (!ids.length) return;
+  commit(); doc.groups.forEach(g => g.members = g.members.filter(id => !ids.includes(id))); refresh();
+  toast(ids.length === 1 ? 'Removed from group' : `Removed ${ids.length} thoughts from their groups`);
+}
+function joinOnDrop(ids){
+  const m = nodeMap(); let joined = null;
+  for (const id of ids) {
+    if (groupOf(id)) continue; const n = m.get(id); if (!n) continue;
+    const cx = n.x + W/2, cy = n.y + HH/2;
+    for (const g of doc.groups) { const b = gBounds.get(g.id); if (b && cx > b.x && cx < b.x + b.w && cy > b.y && cy < b.y + b.h) { g.members.push(id); joined = g; break; } }
+  }
+  if (joined) toast(`Added to “${joined.title}” · Alt P removes`);
+}
+function startGroupRename(gid, fresh){
+  const g = doc.groups.find(x => x.id === gid), el = gEls.get(gid); if (!g || !el || el.querySelector('.tt-in')) return;
+  const gt = el.querySelector('.gt');
+  const inp = document.createElement('input'); inp.className = 'tt-in'; inp.value = g.title; inp.maxLength = 120; inp.setAttribute('aria-label', 'Group name');
+  gt.hidden = true; gt.after(inp); inp.focus(); inp.select();
+  let done = false;
+  const finish = ok => { if (done) return; done = true; const v = inp.value.trim(); if (ok && v && v !== g.title) { if (!fresh) commit(); g.title = v; } inp.remove(); gt.hidden = false; refresh(); };
+  inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); });
+  inp.addEventListener('blur', () => finish(true));
+}
+
+function refreshSelection(){ for (const n of doc.nodes) syncNode(n); renderLinks(); renderPanel(); }
+
+/* ---------- operations ---------- */
+function addNode(preset, pos, opts = {}){
+  commit();
+  const n = {id: uid(), x: Math.round(pos.x), y: Math.round(pos.y), title: opts.title || preset.name, color: preset.color, note: '', collapsed: false};
+  doc.nodes.push(n);
+  if (opts.link) { if (opts.link.side === 'out') doc.links.push({id: uid(), from: opts.link.from, to: n.id, fs: 'out', ts: 'in'}); else doc.links.push({id: uid(), from: n.id, to: opts.link.from, fs: 'out', ts: 'in'}); }
+  if (opts.group) { const g = doc.groups.find(x => x.id === opts.group); if (g) g.members.push(n.id); }
+  sel = new Set([n.id]); active = n.id; selLink = null; selGroup = null;
+  refresh();
+  if (!opts.title) startRename(n.id, true);
+  return n;
+}
+function deleteSelection(){
+  if (!sel.size && !selLink && selGroup) { commit(); doc.groups = doc.groups.filter(g => g.id !== selGroup); selGroup = null; refresh(); toast('Group removed · thoughts kept · Ctrl Z to undo'); return; }
+  if (selLink) { commit(); doc.links = doc.links.filter(l => l.id !== selLink); selLink = null; refresh(); return; }
+  if (!sel.size) return;
+  commit();
+  doc.nodes = doc.nodes.filter(n => !sel.has(n.id));
+  doc.links = doc.links.filter(l => !sel.has(l.from) && !sel.has(l.to));
+  const k = sel.size; sel.clear(); active = null; refresh();
+  toast(`Deleted ${k} ${k === 1 ? 'thought' : 'thoughts'} · Ctrl Z to undo`);
+}
+function duplicate(){
+  if (!sel.size) return;
+  commit();
+  const map = new Map(), fresh = [];
+  for (const n of doc.nodes) if (sel.has(n.id)) { const c = {...n, id: uid(), x: n.x + 40, y: n.y + 40}; map.set(n.id, c.id); fresh.push(c); }
+  doc.nodes.push(...fresh);
+  for (const l of doc.links.slice()) if (map.has(l.from) && map.has(l.to)) doc.links.push({id: uid(), from: map.get(l.from), to: map.get(l.to), fs: fsOf(l), ts: tsOf(l)});
+  sel = new Set(fresh.map(n => n.id)); active = fresh[fresh.length - 1].id; refresh();
+}
+function toggleCollapse(){
+  const list = doc.nodes.filter(n => sel.has(n.id)); if (!list.length) return;
+  commit(); const to = !list.every(n => n.collapsed); list.forEach(n => n.collapsed = to); refresh();
+}
+function startRename(id, fresh){
+  const n = byId(id), el = els.get(id); if (!n || !el) return;
+  const tt = el.querySelector('.tt'); if (el.querySelector('.tt-in')) return;
+  const inp = document.createElement('input'); inp.className = 'tt-in'; inp.value = n.title; inp.maxLength = 200; inp.setAttribute('aria-label', 'Thought title');
+  tt.hidden = true; tt.after(inp); inp.focus(); inp.select();
+  let done = false;
+  const finish = ok => {
+    if (done) return; done = true;
+    const v = inp.value.trim();
+    if (ok && v && v !== n.title) { if (!fresh) commit(); n.title = v; }
+    inp.remove(); tt.hidden = false; refresh();
+  };
+  inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); });
+  inp.addEventListener('blur', () => finish(true));
+}
+
+function forest(){
+  const m = nodeMap(), out = new Map(), indeg = new Map();
+  doc.nodes.forEach(n => { out.set(n.id, []); indeg.set(n.id, 0); });
+  doc.links.forEach(l => { if (m.has(l.from) && m.has(l.to)) { out.get(l.from).push(l.to); indeg.set(l.to, indeg.get(l.to) + 1); } });
+  const byY = (a, b) => (m.get(a).y - m.get(b).y) || (m.get(a).x - m.get(b).x);
+  const ids = doc.nodes.map(n => n.id);
+  const cand = [...ids.filter(id => !indeg.get(id)).sort(byY), ...ids.slice().sort((a, b) => (m.get(a).x - m.get(b).x) || byY(a, b))];
+  const seen = new Set(), kids = new Map(), depth = new Map(), roots = [];
+  for (const r of cand) {
+    if (seen.has(r)) continue;
+    seen.add(r); roots.push(r); depth.set(r, 0); kids.set(r, []);
+    const q = [r];
+    while (q.length) {
+      const id = q.shift();
+      for (const c of out.get(id).slice().sort(byY)) { if (seen.has(c)) continue; seen.add(c); depth.set(c, depth.get(id) + 1); kids.get(id).push(c); kids.set(c, []); q.push(c); }
+    }
+  }
+  return {roots, kids, depth, m};
+}
+function tidyLayout(){
+  const {roots, kids, depth, m} = forest();
+  const COL = 300, GAP = 26, lastBottom = [];
+  let cursor = 0;
+  const place = id => {
+    const n = m.get(id), h = hOf(n), d = depth.get(id), ch = kids.get(id);
+    n.x = d * COL;
+    let y;
+    if (ch.length) {
+      const cs = ch.map(place);
+      const c0 = cs[0].y + hOf(cs[0])/2, c1 = cs[cs.length-1].y + hOf(cs[cs.length-1])/2;
+      y = (c0 + c1)/2 - h/2;
+    } else y = cursor;
+    if (lastBottom[d] != null) y = Math.max(y, lastBottom[d] + GAP);
+    n.y = Math.round(y); lastBottom[d] = n.y + h; cursor = Math.max(cursor, n.y + h + GAP);
+    return n;
+  };
+  for (const r of roots) { place(r); cursor += GAP * 2; for (let i = 0; i < lastBottom.length; i++) lastBottom[i] = Math.max(lastBottom[i] ?? -Infinity, cursor - GAP); }
+}
+
+/* ---------- add menu ---------- */
+const menu = $('#addMenu'), addSearch = $('#addSearch'), addList = $('#addList');
+let menuCtx = null, menuIdx = 0, menuItems = [];
+function openMenu(cx, cy, link){
+  menuCtx = {world: toWorld(cx, cy), link};
+  addSearch.value = ''; menuIdx = 0; renderMenu();
+  menu.hidden = false;
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  menu.style.left = clamp(cx, 8, innerWidth - mw - 8) + 'px';
+  menu.style.top = clamp(cy, 8, innerHeight - mh - 8) + 'px';
+  addSearch.focus();
+}
+function closeMenu(){ menu.hidden = true; menuCtx = null; }
+function renderMenu(){
+  const q = addSearch.value.trim();
+  const ql = q.toLowerCase();
+  menuItems = PRESETS.filter(p => !ql || p.name.toLowerCase().includes(ql)).map(p => ({preset: p}));
+  if (q && !PRESETS.some(p => p.name.toLowerCase() === ql)) {
+    const src = menuCtx && menuCtx.link ? byId(menuCtx.link.from) : null;
+    menuItems.unshift({preset: {name: q, color: src ? src.color : C.clay, hint: 'new thought'}, title: q});
+  }
+  menuIdx = clamp(menuIdx, 0, Math.max(0, menuItems.length - 1));
+  addList.innerHTML = menuItems.map((it, i) => `<button class="mi${i === menuIdx ? ' on' : ''}" data-i="${i}" role="option" aria-selected="${i === menuIdx}"><i style="background:${it.preset.color}"></i><span>${it.title ? 'Add “' + esc(it.title) + '”' : esc(it.preset.name)}</span><small>${esc(it.preset.hint)}</small></button>`).join('');
+}
+function pickMenu(i){
+  const it = menuItems[i]; if (!it || !menuCtx) return;
+  const {world: w, link} = menuCtx; closeMenu();
+  let pos;
+  if (link && link.side === 'out') pos = {x: w.x, y: w.y - IN_Y};
+  else if (link) pos = {x: w.x - W, y: w.y - OUT_Y};
+  else pos = {x: w.x - W/2, y: w.y - HH/2};
+  addNode(it.preset, pos, {link, title: it.title});
+}
+addSearch.addEventListener('input', () => { menuIdx = 0; renderMenu(); });
+addSearch.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown') { menuIdx = (menuIdx + 1) % Math.max(1, menuItems.length); renderMenu(); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { menuIdx = (menuIdx - 1 + menuItems.length) % Math.max(1, menuItems.length); renderMenu(); e.preventDefault(); }
+  else if (e.key === 'Enter') { pickMenu(menuIdx); e.preventDefault(); }
+  else if (e.key === 'Escape') { closeMenu(); e.preventDefault(); }
+  e.stopPropagation();
+});
+addList.addEventListener('click', e => { const b = e.target.closest('.mi'); if (b) pickMenu(+b.dataset.i); });
+document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target) && !vp.contains(e.target)) closeMenu(); }, true);
+
+/* ---------- sidebar ---------- */
+let panelKey = '', editTarget = null;
+const swatches = color => PALETTE.map(([nm, c]) => `<button class="sw${color === c ? ' on' : ''}" data-color="${c}" style="--sw:${c}" title="${nm}" aria-label="${nm}"></button>`).join('') + `<label class="sw sw-custom${color && !PALETTE.some(p => p[1] === color) ? ' on' : ''}" title="Custom color"><input type="color" id="pColor" value="${color || C.clay}" aria-label="Custom color"></label>`;
+const KEYS = [
+  ['Double-click', 'New thought'], ['Shift A', 'Add menu'], ['F2', 'Rename'], ['X', 'Delete'], ['Ctrl D', 'Duplicate'], ['H', 'Collapse'],
+  ['A', 'Select all'], ['Alt A', 'Select none'], ['Home', 'Frame all'], ['F', 'Frame selected'], ['Ctrl Z', 'Undo'], ['Ctrl Shift Z', 'Redo'],
+  ['Ctrl G', 'Group selection'], ['Ctrl Shift G', 'Ungroup'], ['Alt P', 'Remove from group'],
+  ['Ctrl S', 'Save as'], ['Ctrl O', 'Import'], ['N', 'Sidebar'], ['Space', 'Hold and drag to pan'],
+];
+function panelHTML(key){
+  if (key[0] === 'L') {
+    const l = doc.links.find(x => x.id === selLink); const a = byId(l.from), b = byId(l.to);
+    return `<div class="ph"><span class="eyebrow">Link</span></div>
+      <div class="linkcard"><span class="chip"><i style="background:${a.color}"></i><span>${esc(a.title)}</span></span><span aria-hidden="true">→</span><span class="chip"><i style="background:${b.color}"></i><span>${esc(b.title)}</span></span></div>
+      <p class="muted">The link fades from one thought's color into the other's. Hold <kbd>Ctrl</kbd> and right-drag across links to cut several at once.</p>
+      <div class="acts"><button class="btn outline danger" data-p="unlinkSel">Remove link</button></div>`;
+  }
+  if (key[0] === 'G') {
+    const g = curGroup(), k = g.members.length;
+    return `<div class="ph"><span class="eyebrow">Group</span></div>
+      <div class="field"><label for="gTitle">Name</label><input id="gTitle" class="inp" maxlength="120" autocomplete="off"></div>
+      <div class="field"><span class="lbl">Color</span><div class="sw-row" id="pSw"></div></div>
+      <p class="muted">${k} ${k === 1 ? 'thought' : 'thoughts'}. Drag the group's title bar to move them together. Drop a thought inside the group to add it.</p>
+      <div class="acts"><button class="btn outline" data-p="gsel">Select thoughts</button><button class="btn outline" data-p="frameG">Frame</button><button class="btn outline danger" data-p="ungroup">Ungroup</button></div>`;
+  }
+  if (key[0] === 'N') {
+    const grp = groupOf(key.slice(1));
+    return `<div class="ph"><span class="eyebrow">Thought</span></div>
+      <div class="field"><label for="pTitle">Title</label><input id="pTitle" class="inp" maxlength="200" autocomplete="off"></div>
+      <div class="field"><span class="lbl">Color</span><div class="sw-row" id="pSw"></div></div>
+      <div class="field"><label for="pNote">Note</label><textarea id="pNote" class="inp" rows="5" placeholder="Details, links, reminders"></textarea></div>
+      <label class="chk"><input type="checkbox" id="pCollapse"> Collapsed <kbd>H</kbd></label>
+      <div class="field"><span class="lbl">Group</span>${grp ? `<div class="acts"><button class="btn outline" data-p="goGroup" data-gid="${grp.id}">${esc(grp.title)}</button><button class="btn outline" data-p="leave">Remove from group</button></div>` : `<div class="acts"><button class="btn outline" data-p="group">New group <kbd>Ctrl G</kbd></button></div>`}</div>
+      <div class="field"><span class="lbl">Connections</span><div id="pConn" class="conns"></div></div>
+      <div class="acts"><button class="btn outline" data-p="dup">Duplicate</button><button class="btn outline" data-p="frame">Frame</button><button class="btn outline danger" data-p="del">Delete</button></div>`;
+  }
+  if (key[0] === 'M') {
+    return `<div class="ph"><div><span class="eyebrow">Selection</span><h2>${sel.size} thoughts</h2></div></div>
+      <div class="field"><span class="lbl">Color for all selected</span><div class="sw-row" id="pSw"></div></div>
+      <div class="acts"><button class="btn outline" data-p="group">Group <kbd>Ctrl G</kbd></button><button class="btn outline" data-p="collapse">Collapse / expand</button><button class="btn outline" data-p="dup">Duplicate</button><button class="btn outline" data-p="frame">Frame</button><button class="btn outline danger" data-p="del">Delete</button></div>`;
+  }
+  const counts = new Map(); doc.nodes.forEach(n => counts.set(n.color, (counts.get(n.color) || 0) + 1));
+  const legend = [...counts].sort((a, b) => b[1] - a[1]).map(([c, k]) => { const nm = (PALETTE.find(p => p[1] === c) || ['Custom'])[0]; return `<button data-p="selColor" data-color="${c}"><i style="background:${c}"></i>${nm}<span class="n">${k}</span></button>`; }).join('');
+  return `<div class="ph"><div><span class="eyebrow">Map</span><h2>${esc(doc.name)}</h2></div></div>
+    <div class="stats"><div><b>${doc.nodes.length}</b><span>thoughts</span></div><div><b>${doc.links.length}</b><span>links</span></div></div>
+    ${legend ? `<div class="field"><span class="lbl">Colors · click to select</span><div class="legend">${legend}</div></div>` : ''}
+    <div class="acts"><button class="btn outline" data-p="tidy">Tidy layout</button><button class="btn outline" data-p="fit">Frame all</button></div>
+    <p class="muted">Your map is kept in this browser as you work. Use Save as to keep a file you can import later or on another device.</p>
+    <div class="field"><span class="eyebrow">Shortcuts</span></div>
+    <dl class="keys">${KEYS.map(([k, d]) => `<dt>${k === 'Double-click' ? '<kbd>Double-click</kbd>' : K(k)}</dt><dd>${esc(d)}</dd>`).join('')}<dt>${K('Alt')}+drag</dt><dd>Pull a link off a socket</dd><dt>${K('Ctrl')}+RMB</dt><dd>Drag across links to cut</dd><dt>MMB / RMB</dt><dd>Drag to pan</dd></dl>`;
+}
+function connHTML(n){
+  const rows = [];
+  for (const l of doc.links) {
+    if (l.to === n.id) { const o = byId(l.from); if (o) rows.push(['from', o, l]); }
+    if (l.from === n.id) { const o = byId(l.to); if (o) rows.push(['to', o, l]); }
+  }
+  if (!rows.length) return `<p class="muted">No links yet. Drag from either socket to any socket on another thought.</p>`;
+  return rows.map(([dir, o, l]) => `<div class="conn"><span class="cd" style="background:${o.color}"></span><span class="cdir">${dir}</span><button class="cname" data-p="go" data-id="${o.id}" title="Select ${esc(o.title)}">${esc(o.title)}</button><button class="cx" data-p="unlink" data-link="${l.id}" title="Remove link" aria-label="Remove link to ${esc(o.title)}">${XICON}</button></div>`).join('');
+}
+function renderPanel(){
+  if (!panelOpen) return;
+  const key = selLink && doc.links.some(l => l.id === selLink) ? 'L' + selLink : sel.size === 1 ? 'N' + [...sel][0] : sel.size > 1 ? 'M' + sel.size : selGroup && curGroup() ? 'G' + selGroup : 'none';
+  const focused = panel.contains(document.activeElement) && document.activeElement !== panel;
+  if (key !== panelKey || !focused) { panelKey = key; panel.innerHTML = panelHTML(key); }
+  const ids = [...sel], n = ids.length === 1 ? byId(ids[0]) : null;
+  const sw = $('#pSw'); if (sw && !(focused && document.activeElement.id === 'pColor')) { const cs = key[0] === 'G' ? new Set([(curGroup() || {}).color]) : new Set(ids.map(id => (byId(id) || {}).color)); sw.innerHTML = swatches(cs.size === 1 ? [...cs][0] : null); }
+  if (n) {
+    const t = $('#pTitle'), no = $('#pNote');
+    if (t && document.activeElement !== t) t.value = n.title;
+    if (no && document.activeElement !== no) no.value = n.note;
+    const c = $('#pCollapse'); if (c) c.checked = !!n.collapsed;
+    const pc = $('#pConn'); if (pc) pc.innerHTML = connHTML(n);
+  }
+  if (key[0] === 'G') { const gt = $('#gTitle'), g = curGroup(); if (gt && g && document.activeElement !== gt) gt.value = g.title; }
+}
+const selNodes = () => doc.nodes.filter(n => sel.has(n.id));
+panel.addEventListener('input', e => {
+  const t = e.target;
+  if (!['pTitle', 'pNote', 'pColor', 'gTitle'].includes(t.id)) return;
+  if (editTarget !== t) { commit(); editTarget = t; updateChrome(); }
+  const list = selNodes();
+  if (t.id === 'pTitle' && list[0]) { list[0].title = t.value; syncNode(list[0]); }
+  if (t.id === 'pNote' && list[0]) { list[0].note = t.value; syncNode(list[0]); renderLinks(); }
+  if (t.id === 'gTitle') { const g = curGroup(); if (g) { g.title = t.value; renderGroups(); } }
+  if (t.id === 'pColor') { const c = t.value.toLowerCase(); if (panelKey[0] === 'G') { const g = curGroup(); if (g) g.color = c; renderGroups(); } else { list.forEach(n => { n.color = c; syncNode(n); }); renderLinks(); } }
+  persist();
+});
+panel.addEventListener('change', e => {
+  if (e.target.id === 'pColor') { editTarget = null; renderPanel(); }
+  if (e.target.id === 'pCollapse') { const n = selNodes()[0]; if (n) { commit(); n.collapsed = e.target.checked; refresh(); } }
+});
+panel.addEventListener('focusout', e => {
+  if (e.target === editTarget && e.target.id !== 'pColor') editTarget = null;
+  if (e.target.id === 'gTitle') { const g = curGroup(); if (g && !g.title.trim()) { g.title = 'Group'; refresh(); } }
+  if (e.target.id === 'pTitle') { const n = selNodes()[0]; if (n && !n.title.trim()) { n.title = 'Untitled'; refresh(); } }
+});
+panel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.target.blur(); } });
+panel.addEventListener('click', e => {
+  const sw = e.target.closest('.sw[data-color]');
+  if (sw && panelKey[0] === 'G') { const g = curGroup(); if (!g) return; commit(); g.color = sw.dataset.color; refresh(); return; }
+  if (sw) { const list = selNodes(); if (!list.length) return; commit(); list.forEach(n => n.color = sw.dataset.color); refresh(); return; }
+  const b = e.target.closest('[data-p]'); if (!b) return;
+  const act = b.dataset.p;
+  if (act === 'del') deleteSelection();
+  else if (act === 'dup') duplicate();
+  else if (act === 'collapse') toggleCollapse();
+  else if (act === 'frame') fit([...sel]);
+  else if (act === 'fit') fit();
+  else if (act === 'tidy') tidy();
+  else if (act === 'go') { sel = new Set([b.dataset.id]); active = b.dataset.id; selLink = null; refresh(); fit([b.dataset.id]); }
+  else if (act === 'unlink') { commit(); doc.links = doc.links.filter(l => l.id !== b.dataset.link); refresh(); }
+  else if (act === 'unlinkSel') deleteSelection();
+  else if (act === 'group') groupSelection();
+  else if (act === 'ungroup') ungroup();
+  else if (act === 'leave') leaveGroup();
+  else if (act === 'gsel') { const g = curGroup(); if (g) { sel = new Set(g.members); active = null; selGroup = null; refresh(); } }
+  else if (act === 'frameG') { const g = curGroup(); if (g) fit(g.members); }
+  else if (act === 'goGroup') { selGroup = b.dataset.gid; sel.clear(); active = null; selLink = null; refresh(); }
+  else if (act === 'selColor') { sel = new Set(doc.nodes.filter(n => n.color === b.dataset.color).map(n => n.id)); active = null; refresh(); }
+});
+function tidy(){ if (!doc.nodes.length) return; commit(); tidyLayout(); refresh(); fit(); toast('Tidied · Ctrl Z to undo'); }
+
+mapName.addEventListener('input', () => { if (editTarget !== mapName) { commit(); editTarget = mapName; } doc.name = mapName.value; persist(); updateChrome(); });
+mapName.addEventListener('change', () => { editTarget = null; if (!doc.name.trim()) doc.name = 'Untitled map'; refresh(); });
+mapName.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') mapName.blur(); });
+
+/* ---------- keyboard ---------- */
+window.addEventListener('keydown', e => {
+  const typing = e.target.closest && e.target.closest('input,textarea,select,[contenteditable="true"]');
+  const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+  if (e.key === 'Escape') { if (!$('#modal').hidden) closeModal(); else if (!menu.hidden) closeMenu(); return; }
+  if (!$('#modal').hidden) return;
+  if (mod && k === 's') { e.preventDefault(); openSave(); return; }
+  if (mod && k === 'o') { e.preventDefault(); $('#fileIn').click(); return; }
+  if (typing) return;
+  if (e.code === 'Space') { spaceDown = true; vp.classList.add('grab'); e.preventDefault(); return; }
+  if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (mod && k === 'y') { e.preventDefault(); redo(); return; }
+  if (mod && k === 'd') { e.preventDefault(); duplicate(); return; }
+  if (mod && e.code === 'KeyG') { e.preventDefault(); e.shiftKey ? ungroup() : groupSelection(); return; }
+  if (mod && k === 'a') { e.preventDefault(); selectAll(true); return; }
+  if (mod) return;
+  if (k === 'a' && e.shiftKey) { e.preventDefault(); const r = vp.getBoundingClientRect(); const inside = lastMouse.x > r.left && lastMouse.x < r.right && lastMouse.y > r.top && lastMouse.y < r.bottom; openMenu(inside ? lastMouse.x : r.left + r.width/2, inside ? lastMouse.y : r.top + r.height/2); return; }
+  if (k === 'a') { e.preventDefault(); selectAll(!e.altKey); return; }
+  if (k === 'x' || k === 'delete' || k === 'backspace') { e.preventDefault(); deleteSelection(); return; }
+  if (e.altKey && e.code === 'KeyP') { e.preventDefault(); leaveGroup(); return; }
+  if (k === 'h') { toggleCollapse(); return; }
+  if (k === 'n') { panelOpen = !panelOpen; panelKey = ''; refresh(); return; }
+  if (k === 'home') { e.preventDefault(); fit(); return; }
+  if (k === 'f') { fit(sel.size ? [...sel] : null); return; }
+  if (k === 'f2' || k === 'enter') { const id = active && sel.has(active) ? active : sel.size === 1 ? [...sel][0] : null; if (id) { e.preventDefault(); startRename(id); } else if (selGroup) { e.preventDefault(); startGroupRename(selGroup); } return; }
+});
+window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; vp.classList.remove('grab'); } });
+window.addEventListener('blur', () => { spaceDown = false; vp.classList.remove('grab'); });
+function selectAll(on){ sel = on ? new Set(doc.nodes.map(n => n.id)) : new Set(); active = null; selLink = null; selGroup = null; refresh(); }
+
+/* ---------- top bar ---------- */
+$('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
+$('#bAdd').onclick = () => { const r = vp.getBoundingClientRect(); openMenu(r.left + r.width/2 - 125, r.top + r.height/2 - 120); };
+$('#bTidy').onclick = tidy;
+$('#bPanel').onclick = () => { panelOpen = !panelOpen; panelKey = ''; refresh(); };
+$('#bImport').onclick = () => $('#fileIn').click();
+$('#bSave').onclick = openSave;
+$('#bNew').onclick = () => {
+  commit();
+  const root = {id: uid(), x: 0, y: 0, title: 'Central thought', color: C.clay, note: '', collapsed: false};
+  doc.name = 'Untitled map'; doc.nodes = [root]; doc.links = []; doc.groups = []; selGroup = null;
+  sel = new Set([root.id]); active = root.id; selLink = null;
+  refresh(); fit(); doc.view.z = 1; const r = vp.getBoundingClientRect(); doc.view.x = r.width/2 - W/2; doc.view.y = r.height/2 - 45; applyView();
+  startRename(root.id, true);
+  toast('New map started · Ctrl Z brings the previous one back');
+};
+$('#zIn').onclick = () => { const r = vp.getBoundingClientRect(); zoomAt(r.left + r.width/2, r.top + r.height/2, 1.2); };
+$('#zOut').onclick = () => { const r = vp.getBoundingClientRect(); zoomAt(r.left + r.width/2, r.top + r.height/2, 1/1.2); };
+$('#zoomLbl').onclick = () => { const r = vp.getBoundingClientRect(); zoomAt(r.left + r.width/2, r.top + r.height/2, 1/doc.view.z); };
+$('#zFit').onclick = () => fit();
+
+/* ---------- toast ---------- */
+let toastT = 0;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); }
+
+/* ---------- export ---------- */
+function exportObj(){
+  return {app: 'noodle-map', version: 1, name: doc.name, savedAt: new Date().toISOString(),
+    nodes: doc.nodes.map(({id, x, y, title, color, note, collapsed}) => ({id, x, y, title, color, note, collapsed})),
+    links: doc.links.map(l => ({id: l.id, from: l.from, to: l.to, fs: fsOf(l), ts: tsOf(l)})),
+    groups: doc.groups.map(g => ({id: g.id, title: g.title, color: g.color, members: g.members.slice()})), view: doc.view};
+}
+function toMarkdown(){
+  const {roots, kids, m} = forest(), out = [`# ${doc.name}`, ''];
+  const walk = (id, l) => {
+    const n = m.get(id), note = (n.note || '').replace(/\s*\n\s*/g, ' ').trim();
+    out.push(`${'  '.repeat(l)}- **${n.title.replace(/\*/g, '')}**${note ? ' — ' + note : ''}`);
+    kids.get(id).forEach(c => walk(c, l + 1));
+  };
+  roots.forEach(r => walk(r, 0));
+  return out.join('\n') + '\n';
+}
+function wrap(text, max){
+  const lines = [];
+  for (const para of String(text || '').split('\n')) {
+    let line = '';
+    for (let w of para.split(/\s+/)) {
+      if (!w) continue;
+      while (w.length > max) { if (line) { lines.push(line); line = ''; } lines.push(w.slice(0, max)); w = w.slice(max); }
+      if ((line + ' ' + w).trim().length > max) { lines.push(line); line = w; } else line = (line ? line + ' ' : '') + w;
+    }
+    lines.push(line);
+  }
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines;
+}
+function exportSVG(){
+  const {ends, groups} = computeEnds();
+  const info = doc.nodes.map(n => { const lines = n.collapsed ? [] : wrap(n.note, 31); return {n, lines, h: n.collapsed ? HH : 90 + (lines.length ? lines.length * 17 + 12 : 0)}; });
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const {n, h} of info) { x0 = Math.min(x0, n.x - 8); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + W + 8); y1 = Math.max(y1, n.y + h); }
+  const hMap = new Map(info.map(i => [i.n.id, i.h]));
+  let groupsSvg = '';
+  for (const g of doc.groups) {
+    const b = groupRect(g, n => hMap.get(n.id) || 90); if (!b) continue;
+    x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+    const t = g.title.length > 40 ? g.title.slice(0, 39) + '…' : g.title;
+    groupsSvg += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="12" fill="${g.color}" fill-opacity=".09" stroke="${g.color}" stroke-opacity=".5" stroke-width="1.5"/><path d="M${b.x},${b.y+34} V${b.y+12} a12,12 0 0 1 12,-12 H${b.x+b.w-12} a12,12 0 0 1 12,12 V${b.y+34} Z" fill="${g.color}" fill-opacity=".2"/><text x="${b.x+14}" y="${b.y+22}" font-size="14" font-weight="600" fill="${mix(g.color, '#faf9f5', .5)}">${esc(t)}</text>`;
+  }
+  if (!info.length) { x0 = y0 = 0; x1 = y1 = 100; }
+  const pad = 48; x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+  const w = Math.ceil(x1 - x0), h = Math.ceil(y1 - y0);
+  let defs = '', links = '', nodes = '';
+  for (const l of doc.links) {
+    const e = ends.get(l.id); if (!e) continue;
+    const [p1, p2, a, b, s1, s2] = e, d = curve(p1, p2, s1, s2);
+    defs += `<linearGradient id="g${l.id}" gradientUnits="userSpaceOnUse" x1="${p1.x}" y1="${p1.y}" x2="${p2.x === p1.x ? p2.x + .01 : p2.x}" y2="${p2.y}"><stop offset="0" stop-color="${a.color}"/><stop offset="1" stop-color="${b.color}"/></linearGradient>`;
+    links += `<path d="${d}" fill="none" stroke="#141413" stroke-width="5.5" stroke-linecap="round" opacity=".75"/><path d="${d}" fill="none" stroke="url(#g${l.id})" stroke-width="2.8" stroke-linecap="round"/>`;
+  }
+  for (const {n, lines, h: nh} of info) {
+    const hc = headCol(n.color), tc = textOn(hc), x = n.x, y = n.y;
+    const title = n.title.length > 27 ? n.title.slice(0, 26) + '…' : n.title;
+    nodes += `<g><rect x="${x}" y="${y}" width="${W}" height="${nh}" rx="7" fill="#30302e"/>`;
+    nodes += n.collapsed ? `<rect x="${x}" y="${y}" width="${W}" height="${HH}" rx="7" fill="${hc}"/>` : `<path d="M${x},${y+HH} V${y+7} a7,7 0 0 1 7,-7 H${x+W-7} a7,7 0 0 1 7,7 V${y+HH} Z" fill="${hc}"/>`;
+    nodes += `<text x="${x+12}" y="${y+19.5}" font-size="13" font-weight="600" fill="${tc}">${esc(title)}</text>`;
+    if (!n.collapsed) {
+      nodes += `<text x="${x+W-14}" y="${y+OUT_Y+4}" font-size="12" fill="#c2c0b6" text-anchor="end">Out</text><text x="${x+14}" y="${y+IN_Y+4}" font-size="12" fill="#c2c0b6">In</text>`;
+      lines.forEach((ln, i) => { nodes += `<text x="${x+12}" y="${y+90+12+i*17}" font-size="12.5" fill="#c2c0b6">${esc(ln)}</text>`; });
+    }
+    const pill = (cx, cy, c) => { const ph = 12 + Math.max(0, c - 1) * SPREAD; return `<rect x="${cx-6}" y="${cy-ph/2}" width="12" height="${ph}" rx="6" fill="${n.color}" stroke="#141413" stroke-width="1.5"/>`; };
+    nodes += pill(x+W, outPt(n).y, (groups.get(n.id + ':out') || []).length) + pill(x, inBase(n), (groups.get(n.id + ':in') || []).length) + '</g>';
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${x0} ${y0} ${w} ${h}" font-family="DM Sans, Helvetica, Arial, sans-serif"><defs>${defs}</defs><rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="#1f1e1d"/>${groupsSvg}${links}${nodes}</svg>`;
+  return {svg, w, h};
+}
+function svgToPng(svg, w, h){
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(new Blob([svg], {type: 'image/svg+xml'}));
+    img.onload = () => {
+      const s = Math.min(2, 14000 / Math.max(w, h)), c = document.createElement('canvas');
+      c.width = Math.round(w * s); c.height = Math.round(h * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(b => b ? res(b) : rej(new Error('png')), 'image/png');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('svg')); };
+    img.src = url;
+  });
+}
+
+/* ---------- save dialog ---------- */
+const modal = $('#modal'), saveName = $('#saveName'), fallback = $('#fallback');
+const fmtVal = () => (document.querySelector('input[name="fmt"]:checked') || {}).value || 'json';
+const slug = s => (s || 'mind-map').trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').slice(0, 80) || 'mind-map';
+function updateSaveUI(){
+  const f = fmtVal();
+  $('#saveExt').textContent = '.' + f;
+  const pngOff = !dl;
+  document.querySelector('input[value="png"]').disabled = pngOff;
+  document.querySelector('input[value="png"]').closest('.fmt').classList.toggle('off', pngOff);
+  $('#saveGo').textContent = dl ? 'Save' : 'Copy to clipboard';
+  $('#saveNote').textContent = dl
+    ? (f === 'json' ? 'Use this file with Import to pick up exactly where you left off.' : f === 'md' ? 'Only the tree is kept. Import it later to rebuild the map with an automatic layout.' : 'For viewing and sharing. Import works with .json and .md files.')
+    : 'File saving isn’t available in this view, so the contents are copied instead. Paste them into a text file with the extension shown.';
+}
+function openSave(){
+  closeMenu(); fallback.hidden = true;
+  saveName.value = slug(doc.name);
+  if (!dl && fmtVal() === 'png') document.querySelector('input[value="json"]').checked = true;
+  updateSaveUI(); modal.hidden = false; saveName.focus(); saveName.select();
+}
+function closeModal(){ modal.hidden = true; }
+$('#fmts').addEventListener('change', updateSaveUI);
+$('#saveCancel').onclick = closeModal;
+modal.addEventListener('pointerdown', e => { if (e.target === modal) closeModal(); });
+saveName.addEventListener('keydown', e => { if (e.key === 'Enter') $('#saveGo').click(); });
+function showFallback(text){
+  fallback.value = text; fallback.hidden = false; fallback.focus(); fallback.select();
+  try { navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard'), () => toast('Select the text below and copy it')); } catch (_) { toast('Select the text below and copy it'); }
+}
+$('#saveGo').onclick = async () => {
+  const f = fmtVal(), filename = slug(saveName.value) + '.' + f;
+  let data;
+  if (f === 'json') data = JSON.stringify(exportObj(), null, 2);
+  else if (f === 'md') data = toMarkdown();
+  else { const s = exportSVG(); data = s.svg; if (f === 'png') { try { data = await svgToPng(s.svg, s.w, s.h); } catch (_) { toast('Couldn’t draw the image. Try the .svg format.'); return; } } }
+  if (!dl) { if (typeof data === 'string') showFallback(data); return; }
+  try {
+    const r = await dl.save({filename, data});
+    closeModal(); toast(r && r.status === 'delivered' ? 'Sent' : 'Saved ' + filename);
+  } catch (err) {
+    const code = err && err.code;
+    if (code === 'declined') toast('Save cancelled');
+    else if (code === 'rate_limited') toast('A save prompt is already open');
+    else if (typeof data === 'string') showFallback(data);
+    else toast('Saving isn’t available here. Try .json or .svg.');
+  }
+};
+
+/* ---------- import ---------- */
+const fileIn = $('#fileIn');
+fileIn.addEventListener('change', () => { const f = fileIn.files[0]; fileIn.value = ''; if (f) readFile(f); });
+async function readFile(f){
+  if (f.size > 5e6) { toast('That file is over 5 MB. Pick a smaller map file.'); return; }
+  try { importText(await f.text(), f.name); } catch (_) { toast('Couldn’t read that file.'); }
+}
+function fromMarkdown(text, fname){
+  const nodes = [], links = [], parents = [];
+  let name = (fname || '').replace(/\.[^.]+$/, '') || 'Imported outline';
+  let hOffset = 0, headingDepth = -1, stack = [], last = null, first = true;
+  const clean = s => s.replace(/\*\*|__|`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim();
+  const add = (depth, txt) => {
+    let title = txt.trim(), note = '';
+    const mm = title.match(/^\*\*(.+?)\*\*\s*(?:[—–-]\s*(.*))?$/);
+    if (mm) { title = mm[1]; note = mm[2] || ''; }
+    else { const sp = title.match(/^(.{1,80}?)\s+[—–]\s+(.+)$/); if (sp) { title = sp[1]; note = sp[2]; } }
+    depth = Math.min(depth, parents.length);
+    const n = {id: uid(), x: 0, y: 0, title: clean(title).slice(0, 200) || 'Untitled', note: clean(note), color: DEPTH_COLORS[depth % DEPTH_COLORS.length], collapsed: false};
+    nodes.push(n);
+    if (depth > 0 && parents[depth - 1]) links.push({id: uid(), from: parents[depth - 1], to: n.id});
+    parents[depth] = n.id; parents.length = depth + 1; last = n;
+  };
+  for (const raw of text.replace(/\r/g, '').split('\n')) {
+    if (!raw.trim() || /^\s*(---|\*\*\*|```)/.test(raw)) continue;
+    let m;
+    if ((m = raw.match(/^(#{1,6})\s+(.*)$/))) {
+      const lvl = m[1].length;
+      if (first && lvl === 1) { name = clean(m[2]) || name; hOffset = 1; first = false; continue; }
+      first = false;
+      const d = Math.max(0, lvl - 1 - hOffset); add(d, m[2]); headingDepth = Math.min(d, parents.length - 1); stack = [];
+      continue;
+    }
+    first = false;
+    if ((m = raw.match(/^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.*)$/))) {
+      const ind = m[1].replace(/\t/g, '    ').length;
+      while (stack.length && stack[stack.length - 1] >= ind) stack.pop();
+      stack.push(ind);
+      add(headingDepth + stack.length, m[2]);
+      continue;
+    }
+    if (last) last.note = (last.note ? last.note + '\n' : '') + clean(raw);
+    else add(headingDepth + 1, raw);
+  }
+  return {name: name.slice(0, 120), nodes, links};
+}
+function importText(text, fname){
+  const t = text.trim(); let d;
+  if (/\.json$/i.test(fname || '') || t.startsWith('{')) {
+    try { d = sanitize(JSON.parse(t)); } catch (_) { toast('That file isn’t valid JSON. Pick a .json file saved from Noodle Map.'); return false; }
+    if (!d) { toast('That JSON has no list of thoughts in it.'); return false; }
+  } else {
+    d = fromMarkdown(t, fname);
+    if (!d.nodes.length) { toast('No headings or list items found in that file.'); return false; }
+    d.layout = true;
+  }
+  commit();
+  doc.name = d.name; doc.nodes = d.nodes; doc.links = d.links; doc.groups = d.groups || []; selGroup = null; sel.clear(); active = null; selLink = null;
+  syncAll(); if (d.layout) tidyLayout();
+  refresh(); fit();
+  toast(`Imported ${d.nodes.length} ${d.nodes.length === 1 ? 'thought' : 'thoughts'} · Ctrl Z to undo`);
+  return true;
+}
+let dragDepth = 0;
+vp.addEventListener('dragenter', e => { if ([...(e.dataTransfer.types || [])].includes('Files')) { dragDepth++; $('#dropzone').hidden = false; e.preventDefault(); } });
+vp.addEventListener('dragover', e => { if ([...(e.dataTransfer.types || [])].includes('Files')) e.preventDefault(); });
+vp.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('#dropzone').hidden = true; });
+vp.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#dropzone').hidden = true; const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) readFile(f); });
+document.addEventListener('paste', e => {
+  if (e.target.closest && e.target.closest('input,textarea')) return;
+  if (!modal.hidden) return;
+  const text = (e.clipboardData && e.clipboardData.getData('text')) || ''; if (!text.trim()) return;
+  e.preventDefault();
+  if (text.trim().startsWith('{')) { importText(text, 'pasted.json'); return; }
+  const lines = text.trim().split(/\r?\n/), w = toWorld(lastMouse.x, lastMouse.y);
+  const n = addNode(PRESETS[0], {x: w.x - W/2, y: w.y - HH/2}, {title: lines[0].trim().slice(0, 200)});
+  if (lines.length > 1) { n.note = lines.slice(1).join('\n').trim().slice(0, 5000); refresh(); }
+});
+
+/* ---------- boot ---------- */
+let saved = null;
+try { const raw = localStorage.getItem(LS); if (raw) saved = sanitize(JSON.parse(raw)); } catch (_) {}
+doc = saved || sampleDoc();
+if (!Array.isArray(doc.groups)) doc.groups = [];
+syncAll();
+if (!saved) { tidyLayout(); }
+refresh(); setHint();
+requestAnimationFrame(() => { if (!saved) fit(); else applyView(); });
+window.addEventListener('resize', () => { const p = window.innerWidth > 760; if (!p && panelOpen && document.activeElement === document.body) { /* keep user choice */ } applyView(); });
+
+(async () => {
+  try { dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (_) { dl = null; }
+  if (!window.claude) {
+    // Standalone (e.g. GitHub Pages): save through a normal browser download.
+    dl = {save: async ({filename, data}) => {
+      const blob = data instanceof Blob ? data : new Blob([data], {type: /\.json$/.test(filename) ? 'application/json' : /\.svg$/.test(filename) ? 'image/svg+xml' : 'text/plain'});
+      const url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      return {status: 'saved'};
+    }};
+  }
+  updateSaveUI();
+})();
+})();
+</script>
+
+</body>
+</html>
